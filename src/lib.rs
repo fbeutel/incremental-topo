@@ -87,14 +87,12 @@ extern crate failure;
 extern crate failure_derive;
 #[macro_use]
 extern crate log;
+extern crate bimap;
 extern crate slab;
-
-pub mod bimap;
 
 use bimap::BiMap;
 use slab::Slab;
 use std::{
-    borrow::Borrow,
     cmp::{Ordering, Reverse},
     collections::{BinaryHeap, HashSet},
     hash::Hash,
@@ -238,11 +236,7 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
     /// assert!(!dag.contains_node("horse"));
     /// assert!(!dag.contains_node("orc"));
     /// ```
-    pub fn contains_node<Q>(&self, node: &Q) -> bool
-    where
-        T: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
+    pub fn contains_node(&self, node: &T) -> bool {
         self.node_keys.contains_left(node)
     }
 
@@ -266,11 +260,7 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
     /// assert!(!dag.delete_node("horse"));
     /// assert!(!dag.delete_node(&"orc"));
     /// ```
-    pub fn delete_node<Q>(&mut self, node: &Q) -> bool
-    where
-        T: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
+    pub fn delete_node(&mut self, node: &T) -> bool {
         if let Some((_, key)) = self.node_keys.remove_by_left(node) {
             // Remove associated data
             let data = self.node_data.remove(key);
@@ -339,12 +329,7 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
     /// assert!(dag.add_dependency("human", "cat").unwrap());
     /// assert!(dag.add_dependency("cat", "mouse").unwrap());
     /// ```
-    pub fn add_dependency<Q, R>(&mut self, prec: &Q, succ: &R) -> Result<bool>
-    where
-        T: Borrow<Q> + Borrow<R>,
-        Q: Hash + Eq + ?Sized,
-        R: Hash + Eq + ?Sized,
-    {
+    pub fn add_dependency(&mut self, prec: &T, succ: &T) -> Result<bool> {
         let (prec_key, succ_key) = self.get_dep_keys(prec, succ)?;
 
         if prec_key == succ_key {
@@ -430,12 +415,7 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
     /// assert!(!dag.contains_dependency("human", "mouse"));
     /// assert!(!dag.contains_dependency("cat", "horse"));
     /// ```
-    pub fn contains_dependency<Q, R>(&self, prec: &Q, succ: &R) -> bool
-    where
-        T: Borrow<Q> + Borrow<R>,
-        Q: Hash + Eq + ?Sized,
-        R: Hash + Eq + ?Sized,
-    {
+    pub fn contains_dependency<Q, R>(&self, prec: &T, succ: &T) -> bool {
         let (prec_key, succ_key) = match self.get_dep_keys(prec, succ) {
             Ok(val) => val,
             _ => return false,
@@ -474,12 +454,7 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
     /// assert!(dag.contains_transitive_dependency("human", "mouse"));
     /// assert!(!dag.contains_transitive_dependency("dog", "mouse"));
     /// ```
-    pub fn contains_transitive_dependency<Q, R>(&self, prec: &Q, succ: &R) -> bool
-    where
-        T: Borrow<Q> + Borrow<R>,
-        Q: Hash + Eq + ?Sized,
-        R: Hash + Eq + ?Sized,
-    {
+    pub fn contains_transitive_dependency(&self, prec: &T, succ: &T) -> bool {
         // If either node is missing, return quick
         let (prec_key, succ_key) = match self.get_dep_keys(prec, succ) {
             Ok(val) => val,
@@ -555,12 +530,7 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
     /// assert!(dag.delete_dependency("human", "dog"));
     /// assert!(!dag.delete_dependency("human", "mouse"));
     /// ```
-    pub fn delete_dependency<Q, R>(&mut self, prec: &Q, succ: &R) -> bool
-    where
-        T: Borrow<Q> + Borrow<R>,
-        Q: Hash + Eq + ?Sized,
-        R: Hash + Eq + ?Sized,
-    {
+    pub fn delete_dependency(&mut self, prec: &T, succ: &T) -> bool {
         let (prec_key, succ_key) = match self.get_dep_keys(prec, succ) {
             Ok(val) => val,
             _ => return false,
@@ -689,11 +659,7 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
     ///
     /// assert_eq!(pairs, expected_pairs);
     /// ```
-    pub fn descendants_unsorted<Q>(&self, node: &Q) -> Result<DescendantsUnsorted<T>>
-    where
-        T: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
+    pub fn descendants_unsorted(&self, node: &T) -> Result<DescendantsUnsorted<T>> {
         let node_key = if let Some(key) = self.node_keys.get_by_left(node) {
             *key
         } else {
@@ -745,11 +711,7 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
     ///
     /// [`descendants_unsorted`]:
     /// struct.IncrementalTopo.html#method.descendants_unsorted
-    pub fn descendants<Q>(&self, node: &Q) -> Result<Descendants<T>>
-    where
-        T: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
+    pub fn descendants(&self, node: &T) -> Result<Descendants<T>> {
         let node_key = if let Some(key) = self.node_keys.get_by_left(node) {
             *key
         } else {
@@ -806,12 +768,7 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
     /// assert_eq!(dag.topo_cmp("cat", "dog").unwrap(), Greater);
     /// assert!(dag.topo_cmp("cat", "horse").is_err());
     /// ```
-    pub fn topo_cmp<Q, R>(&self, node_a: &Q, node_b: &R) -> Result<Ordering>
-    where
-        T: Borrow<Q> + Borrow<R>,
-        Q: Hash + Eq + ?Sized,
-        R: Hash + Eq + ?Sized,
-    {
+    pub fn topo_cmp(&self, node_a: &T, node_b: &T) -> Result<Ordering> {
         let (key_a, key_b) = self.get_dep_keys(node_a, node_b)?;
 
         Ok(self.node_data[key_a]
@@ -819,12 +776,7 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
             .cmp(&self.node_data[key_b].topo_order))
     }
 
-    fn get_dep_keys<Q, R>(&self, prec: &Q, succ: &R) -> Result<(usize, usize)>
-    where
-        T: Borrow<Q> + Borrow<R>,
-        Q: Hash + Eq + ?Sized,
-        R: Hash + Eq + ?Sized,
-    {
+    fn get_dep_keys(&self, prec: &T, succ: &T) -> Result<(usize, usize)> {
         match (
             self.node_keys.get_by_left(prec),
             self.node_keys.get_by_left(succ),
@@ -1018,18 +970,18 @@ mod tests {
 
         assert_eq!(dag.size(), 7);
 
-        dag.add_dependency("lion", "human")?;
-        dag.add_dependency("lion", "gazelle")?;
+        dag.add_dependency(&"lion", &"human")?;
+        dag.add_dependency(&"lion", &"gazelle")?;
 
-        dag.add_dependency("human", "dog")?;
-        dag.add_dependency("human", "cat")?;
+        dag.add_dependency(&"human", &"dog")?;
+        dag.add_dependency(&"human", &"cat")?;
 
-        dag.add_dependency("dog", "cat")?;
-        dag.add_dependency("cat", "mouse")?;
+        dag.add_dependency(&"dog", &"cat")?;
+        dag.add_dependency(&"cat", &"mouse")?;
 
-        dag.add_dependency("gazelle", "grass")?;
+        dag.add_dependency(&"gazelle", &"grass")?;
 
-        dag.add_dependency("mouse", "grass")?;
+        dag.add_dependency(&"mouse", &"grass")?;
 
         Ok(dag)
     }
@@ -1045,11 +997,11 @@ mod tests {
         dag.add_node("human");
 
         assert_eq!(dag.size(), 5);
-        assert!(dag.contains_node("dog"));
-        assert!(dag.contains_node("cat"));
-        assert!(dag.contains_node("mouse"));
-        assert!(dag.contains_node("lion"));
-        assert!(dag.contains_node("human"));
+        assert!(dag.contains_node(&"dog"));
+        assert!(dag.contains_node(&"cat"));
+        assert!(dag.contains_node(&"mouse"));
+        assert!(dag.contains_node(&"lion"));
+        assert!(dag.contains_node(&"human"));
     }
 
     #[test]
@@ -1064,9 +1016,9 @@ mod tests {
 
         assert_eq!(dag.size(), 3);
 
-        assert!(dag.contains_node("dog"));
-        assert!(dag.contains_node("cat"));
-        assert!(dag.contains_node("human"));
+        assert!(dag.contains_node(&"dog"));
+        assert!(dag.contains_node(&"cat"));
+        assert!(dag.contains_node(&"human"));
     }
 
     #[test]
@@ -1079,13 +1031,13 @@ mod tests {
 
         assert_eq!(dag.size(), 3);
 
-        assert!(dag.contains_node("dog"));
-        assert!(dag.contains_node("cat"));
-        assert!(dag.contains_node("human"));
+        assert!(dag.contains_node(&"dog"));
+        assert!(dag.contains_node(&"cat"));
+        assert!(dag.contains_node(&"human"));
 
-        assert!(dag.delete_node("human"));
+        assert!(dag.delete_node(&"human"));
         assert_eq!(dag.size(), 2);
-        assert!(!dag.contains_node("human"));
+        assert!(!dag.contains_node(&"human"));
     }
 
     #[test]
@@ -1098,11 +1050,11 @@ mod tests {
 
         assert_eq!(dag.size(), 3);
 
-        assert!(dag.add_dependency("1", "2").is_ok());
-        assert!(dag.add_dependency("2", "3").is_ok());
+        assert!(dag.add_dependency(&"1", &"2").is_ok());
+        assert!(dag.add_dependency(&"2", &"3").is_ok());
 
-        assert!(dag.add_dependency("3", "1").is_err());
-        assert!(dag.add_dependency("1", "1").is_err());
+        assert!(dag.add_dependency(&"3", &"1").is_err());
+        assert!(dag.add_dependency(&"1", &"1").is_err());
     }
 
     #[test]
@@ -1110,7 +1062,7 @@ mod tests {
         let dag = get_basic_dag().unwrap();
 
         let children: HashSet<_> = dag
-            .descendants_unsorted("human")
+            .descendants_unsorted(&"human")
             .unwrap()
             .map(|(_, v)| *v)
             .collect();
@@ -1120,7 +1072,7 @@ mod tests {
 
         assert_eq!(children, expected_children);
 
-        let ordered_children: Vec<_> = dag.descendants("human").unwrap().map(|v| *v).collect();
+        let ordered_children: Vec<_> = dag.descendants(&"human").unwrap().map(|v| *v).collect();
         assert_eq!(ordered_children, vec!["dog", "cat", "mouse", "grass"])
     }
 
@@ -1129,7 +1081,7 @@ mod tests {
         let dag = get_basic_dag().unwrap();
 
         let topo_orders: HashSet<_> = dag
-            .descendants_unsorted("lion")
+            .descendants_unsorted(&"lion")
             .unwrap()
             .map(|p| p.0)
             .collect();
@@ -1147,11 +1099,11 @@ mod tests {
 
         assert_eq!(dag.size(), 3);
 
-        dag.add_dependency("human", "dog").unwrap();
-        dag.add_dependency("human", "cat").unwrap();
-        dag.add_dependency("dog", "cat").unwrap();
+        dag.add_dependency(&"human", &"dog").unwrap();
+        dag.add_dependency(&"human", &"cat").unwrap();
+        dag.add_dependency(&"dog", &"cat").unwrap();
 
-        let animal_order: Vec<_> = dag.descendants("human").unwrap().map(|v| *v).collect();
+        let animal_order: Vec<_> = dag.descendants(&"human").unwrap().map(|v| *v).collect();
 
         assert_eq!(animal_order, vec!["dog", "cat"]);
     }
@@ -1165,13 +1117,13 @@ mod tests {
         assert!(dag.add_node("dog"));
         assert!(dag.add_node("human"));
 
-        assert!(dag.add_dependency("human", "cat").unwrap());
-        assert!(dag.add_dependency("human", "dog").unwrap());
-        assert!(dag.add_dependency("dog", "cat").unwrap());
-        assert!(dag.add_dependency("cat", "mouse").unwrap());
+        assert!(dag.add_dependency(&"human", &"cat").unwrap());
+        assert!(dag.add_dependency(&"human", &"dog").unwrap());
+        assert!(dag.add_dependency(&"dog", &"cat").unwrap());
+        assert!(dag.add_dependency(&"cat", &"mouse").unwrap());
 
         let pairs = dag
-            .descendants_unsorted("human")
+            .descendants_unsorted(&"human")
             .unwrap()
             .collect::<HashSet<_>>();
 
@@ -1191,13 +1143,13 @@ mod tests {
         assert!(dag.add_node("dog"));
         assert!(dag.add_node("human"));
 
-        assert!(dag.add_dependency("human", "cat").unwrap());
-        assert!(dag.add_dependency("human", "dog").unwrap());
-        assert!(dag.add_dependency("dog", "cat").unwrap());
-        assert!(dag.add_dependency("cat", "mouse").unwrap());
+        assert!(dag.add_dependency(&"human", &"cat").unwrap());
+        assert!(dag.add_dependency(&"human", &"dog").unwrap());
+        assert!(dag.add_dependency(&"dog", &"cat").unwrap());
+        assert!(dag.add_dependency(&"cat", &"mouse").unwrap());
 
-        assert_eq!(dag.topo_cmp("human", "mouse").unwrap(), Less);
-        assert_eq!(dag.topo_cmp("cat", "dog").unwrap(), Greater);
-        assert!(dag.topo_cmp("cat", "horse").is_err());
+        assert_eq!(dag.topo_cmp(&"human", &"mouse").unwrap(), Less);
+        assert_eq!(dag.topo_cmp(&"cat", &"dog").unwrap(), Greater);
+        assert!(dag.topo_cmp(&"cat", &"horse").is_err());
     }
 }
