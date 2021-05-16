@@ -772,6 +772,18 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
         })
     }
 
+    /// Return the order of a node in the graph.
+    pub fn node_order<Q>(&self, node: &Q) -> Result<u32>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized
+    {
+        match self.node_keys.get_by_left(node) {
+            Some(key) => Ok(self.node_data[*key].topo_order),
+            None => Err(Error::NodeMissing)
+        }
+    }
+
     /// Compare two nodes present in the graph, topographically. Returns
     /// Err(...) if either node is missing from the graph.
     ///
@@ -1192,5 +1204,28 @@ mod tests {
         assert_eq!(dag.topo_cmp("human", "mouse").unwrap(), Less);
         assert_eq!(dag.topo_cmp("cat", "dog").unwrap(), Greater);
         assert!(dag.topo_cmp("cat", "horse").is_err());
+    }
+
+    #[test]
+    fn node_order() {
+        let mut dag = IncrementalTopo::new();
+
+        assert!(dag.add_node("cat"));
+        assert!(dag.add_node("mouse"));
+        assert!(dag.add_node("dog"));
+        assert!(dag.add_node("human"));
+
+        assert!(dag.add_dependency("human", "cat").unwrap());
+        assert!(dag.add_dependency("human", "dog").unwrap());
+        assert!(dag.add_dependency("dog", "cat").unwrap());
+        assert!(dag.add_dependency("cat", "mouse").unwrap());
+
+        let order_cat = dag.node_order("cat").unwrap();
+        let order_mouse = dag.node_order("mouse").unwrap();
+        let order_dog = dag.node_order("dog").unwrap();
+        let order_human = dag.node_order("human").unwrap();
+
+        assert!(order_human < order_mouse);
+        assert!(order_cat > order_dog);
     }
 }
