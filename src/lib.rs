@@ -92,7 +92,24 @@ use core::{
 };
 use failure_derive::Fail;
 use slab::Slab;
-use std::collections::{BinaryHeap, HashSet};
+use std::{collections::{BinaryHeap, HashSet}, marker::PhantomData};
+
+/// Trait which can be implemented to provide custom dependency checks.
+/// This allows for forbidding not only cycles in the graph, but also other relations.
+pub trait DependencyCheck<T> {
+    /// Return true if a conflict with the given set of precursors and successors exist.
+    fn check_conflicts<'a>(precursors: &HashSet<usize>, successors: &HashSet<usize>, node_lookup_fn: impl Fn(&usize) -> &'a T) -> bool
+    where T: 'a;
+}
+
+
+impl<T> DependencyCheck<T> for PhantomData<T> {
+    fn check_conflicts<'a>(_: &HashSet<usize>, _: &HashSet<usize>, _: impl Fn(&usize) -> &'a T) -> bool 
+    where T: 'a
+    {
+        false
+    }
+}
 
 /// Data structure for maintaining a topological ordering over a collection of
 /// elements, in an incremental fashion.
@@ -300,6 +317,7 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
         }
     }
 
+
     /// Add a directed link between two nodes already present in the graph.
     ///
     /// This link indicates an ordering constraint on the two nodes, now `prec`
@@ -338,6 +356,19 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
         Q: Hash + Eq + ?Sized,
         R: Hash + Eq + ?Sized,
     {
+        self.add_dependency_checked::<Q, R, PhantomData<T>>(prec, succ)
+        //self.add_dependency_checked(prec, succ, |_, _, _| false)
+    }
+
+
+    pub fn add_dependency_checked<Q, R, DC>(&mut self, prec: &Q, succ: &R) -> Result<bool>
+    where
+        T: Borrow<Q> + Borrow<R>,
+        Q: Hash + Eq + ?Sized,
+        R: Hash + Eq + ?Sized,
+        //NF: Fn(&usize)->&T,
+        DC: DependencyCheck<T>//Fn(&HashSet<usize>, &HashSet<usize>, NF) -> bool
+    {
         let (prec_key, succ_key) = self.get_dep_keys(prec, succ)?;
 
         if prec_key == succ_key {
@@ -345,18 +376,30 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
             return Err(Error::CycleDetected);
         }
 
-        // Insert forward edge
-        let mut no_prev_edge = self.node_data[prec_key].children.insert(succ_key);
-        let upper_bound = self.node_data[prec_key].topo_order;
-
-        // Insert backward edge
-        no_prev_edge = no_prev_edge && self.node_data[succ_key].parents.insert(prec_key);
-        let lower_bound = self.node_data[succ_key].topo_order;
-
         // If edge already exists short circuit
-        if !no_prev_edge {
+        if self.node_data[prec_key].children.contains(&succ_key) {
             return Ok(false);
         }
+
+        let upper_bound = self.node_data[prec_key].topo_order;
+        let lower_bound = self.node_data[succ_key].topo_order;
+        let mut visited = HashSet::new();
+
+        // Walk changes forward from the succ, checking for any cycles that would be
+        // introduced
+        let change_forward = self.dfs_forward(succ_key, &mut visited, upper_bound)?;
+        log::trace!("Change forward: {:?}", change_forward);
+        // Walk backwards from the prec
+        let change_backward = self.dfs_backward(prec_key, &mut visited);
+        log::trace!("Change backward: {:?}", change_backward);
+
+        if DC::check_conflicts(&change_backward, &change_forward, |id| self.node_keys.get_by_right(id).unwrap()) {
+            return Err(Error::CycleDetected);
+        }
+
+        // Insert edge
+        self.node_data[prec_key].children.insert(succ_key);
+        self.node_data[succ_key].parents.insert(prec_key);
 
         log::info!("Adding edge from {:?} to {:?}", prec_key, succ_key);
 
@@ -370,15 +413,6 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
         // the graph
         if lower_bound < upper_bound {
             log::trace!("Will change");
-            let mut visited = HashSet::new();
-
-            // Walk changes forward from the succ, checking for any cycles that would be
-            // introduced
-            let change_forward = self.dfs_forward(succ_key, &mut visited, upper_bound)?;
-            log::trace!("Change forward: {:?}", change_forward);
-            // Walk backwards from the prec
-            let change_backward = self.dfs_backward(prec_key, &mut visited, lower_bound);
-            log::trace!("Change backward: {:?}", change_backward);
 
             self.reorder_nodes(change_forward, change_backward);
 
@@ -861,7 +895,7 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
                     return Err(Error::CycleDetected);
                 }
 
-                if !visited.contains(&child_key) && child_topo_order < upper_bound {
+                if !visited.contains(&child_key) {
                     stack.push(*child_key);
                 }
             }
@@ -874,7 +908,6 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
         &self,
         start_key: usize,
         visited: &mut HashSet<usize>,
-        lower_bound: u32,
     ) -> HashSet<usize> {
         let mut stack = Vec::new();
         let mut result = HashSet::new();
@@ -886,9 +919,7 @@ impl<T: Hash + Eq> IncrementalTopo<T> {
             result.insert(next_key);
 
             for parent_key in &self.node_data[next_key].parents {
-                let parent_topo_order = self.node_data[*parent_key].topo_order;
-
-                if !visited.contains(&parent_key) && lower_bound < parent_topo_order {
+                if !visited.contains(&parent_key) {
                     stack.push(*parent_key);
                 }
             }
@@ -1008,6 +1039,7 @@ where
 #[cfg(test)]
 mod tests {
     extern crate pretty_env_logger;
+
     use super::*;
 
     fn get_basic_dag() -> Result<IncrementalTopo<&'static str>> {
@@ -1227,5 +1259,49 @@ mod tests {
 
         assert!(order_human < order_mouse);
         assert!(order_cat > order_dog);
+    }
+
+    struct Foo;
+
+    impl DependencyCheck<&'static str> for Foo {
+        fn check_conflicts<'a>(precursors: &HashSet<usize>, successors: &HashSet<usize>, node_lookup_fn: impl Fn(&usize) -> &'a &'static str) -> bool
+        where &'static str: 'a
+        {
+            let precursors = precursors.iter().map(|t| node_lookup_fn(t)).collect::<HashSet<_>>();
+            let successors = successors.iter().map(|t| node_lookup_fn(t)).collect::<HashSet<_>>();
+
+            for prec in precursors {
+                for succ in &successors {
+                    if prec.starts_with(*succ) || succ.starts_with(prec) {
+                        return true;
+                    }
+                }
+            }
+
+            false
+        }
+    }
+
+    #[test]
+    fn custom_checks() {
+        let mut dag = IncrementalTopo::new();
+
+        // Example: We model dependency relations between paths.
+        // Paths intrinsically depend on their parent paths and vice versa.
+        // Therefore, 'foo' and 'foo/bar' have an intrinsic dependency relation (because one is part of the other).
+        // 
+        // 'foo' -> 'test' and 'bar' -> 'foo/bar'
+        // then we disallow 'test' -> 'bar' because then we would have 'foo' -> ... -> 'foo/bar'
+
+        assert!(dag.add_node("foo"));
+        assert!(dag.add_node("test"));
+
+        assert!(dag.add_node("foo/bar"));
+        assert!(dag.add_node("bar"));
+
+        assert!(dag.add_dependency_checked::<_, _, Foo>("bar", "foo/bar").unwrap());
+        assert!(dag.add_dependency_checked::<_, _, Foo>("foo", "test").unwrap());
+
+        assert!(dag.add_dependency_checked::<_, _, Foo>("test", "bar").is_err());
     }
 }
